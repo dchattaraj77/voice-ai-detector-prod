@@ -1,3 +1,4 @@
+import os
 import base64
 import io
 import requests
@@ -5,8 +6,21 @@ import torch
 import numpy as np
 import librosa
 import whisper
+
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
+
+# ======================
+# Low-RAM optimizations
+# ======================
+
+torch.set_num_threads(1)
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
+# ======================
+# Config
+# ======================
 
 API_KEY = "voice_detector_2026"
 MODEL_PATH = "models/detector.pt"
@@ -16,7 +30,8 @@ DURATION = 3
 SAMPLES = SAMPLE_RATE * DURATION
 TEMPERATURE = 1.8
 
-whisper_model = whisper.load_model("base")
+# Tiny Whisper = very low memory, perfect for language detection
+whisper_model = whisper.load_model("tiny")
 
 LANG_MAP = {
     "en": "English",
@@ -26,6 +41,10 @@ LANG_MAP = {
     "ml": "Malayalam"
 }
 
+# ======================
+# CNN Detector
+# ======================
+
 class Detector(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -33,11 +52,14 @@ class Detector(torch.nn.Module):
             torch.nn.Conv2d(1, 32, 3, padding=1),
             torch.nn.ReLU(),
             torch.nn.MaxPool2d(2),
+
             torch.nn.Conv2d(32, 64, 3, padding=1),
             torch.nn.ReLU(),
             torch.nn.MaxPool2d(2),
+
             torch.nn.Conv2d(64, 128, 3, padding=1),
             torch.nn.ReLU(),
+
             torch.nn.AdaptiveAvgPool2d(1),
             torch.nn.Flatten(),
             torch.nn.Linear(128, 2),
@@ -51,6 +73,10 @@ model = Detector()
 model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
 model.eval()
 
+# ======================
+# FastAPI
+# ======================
+
 app = FastAPI(title="AI Voice Detector API")
 
 
@@ -58,6 +84,10 @@ class AudioRequest(BaseModel):
     audio_base64: str | None = None
     audio_url: str | None = None
 
+
+# ======================
+# Helpers
+# ======================
 
 def preprocess(audio_bytes):
     audio, _ = librosa.load(io.BytesIO(audio_bytes), sr=SAMPLE_RATE)
@@ -67,7 +97,12 @@ def preprocess(audio_bytes):
     else:
         audio = audio[:SAMPLES]
 
-    mel = librosa.feature.melspectrogram(y=audio, sr=SAMPLE_RATE, n_mels=128)
+    mel = librosa.feature.melspectrogram(
+        y=audio,
+        sr=SAMPLE_RATE,
+        n_mels=128
+    )
+
     mel = librosa.power_to_db(mel)
 
     return torch.tensor(mel).float().unsqueeze(0).unsqueeze(0)
@@ -75,7 +110,9 @@ def preprocess(audio_bytes):
 
 def detect_language(audio_bytes):
     audio, _ = librosa.load(io.BytesIO(audio_bytes), sr=16000)
-    result = whisper_model.transcribe(audio)
+
+    result = whisper_model.transcribe(audio, fp16=False)
+
     code = result.get("language", "unknown")
     return LANG_MAP.get(code, code)
 
@@ -92,6 +129,10 @@ def load_audio(req: AudioRequest):
 
     raise HTTPException(400, "Provide audio_base64 or audio_url")
 
+
+# ======================
+# API Endpoint
+# ======================
 
 @app.post("/detect")
 def detect(req: AudioRequest, x_api_key: str = Header(None)):
@@ -113,7 +154,11 @@ def detect(req: AudioRequest, x_api_key: str = Header(None)):
     ai_prob = float(probs[1])
 
     classification = "AI_GENERATED" if ai_prob > 0.5 else "HUMAN"
-    confidence = round(ai_prob if classification == "AI_GENERATED" else 1 - ai_prob, 4)
+
+    confidence = round(
+        ai_prob if classification == "AI_GENERATED" else 1 - ai_prob,
+        4
+    )
 
     explanation = (
         "Unnatural pitch consistency and synthetic spectral patterns detected"
@@ -130,3 +175,4 @@ def detect(req: AudioRequest, x_api_key: str = Header(None)):
         "confidenceScore": confidence,
         "explanation": explanation
     }
+
