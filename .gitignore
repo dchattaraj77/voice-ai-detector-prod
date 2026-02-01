@@ -1,0 +1,50 @@
+# ======================
+# ML training & datasets
+# ======================
+training/
+data/
+datasets/
+audio/
+samples/
+
+*.wav
+*.mp3
+*.flac
+*.ogg
+
+# ======================
+# Model artifacts (keep final model)
+# ======================
+models/*
+!models/detector.pt
+
+*.pt.bak
+*.ckpt
+*.h5
+
+# ======================
+# Python junk
+# ======================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+
+# ======================
+# Virtual environments
+# ======================
+venv/
+.env/
+
+# ======================
+# OS files
+# ======================
+.DS_Store
+Thumbs.db
+
+# ======================
+# Logs
+# ======================
+*.log
+
